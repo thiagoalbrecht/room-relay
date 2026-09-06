@@ -177,7 +177,7 @@ const isMainModule = process.argv[1] && resolve(process.argv[1]) === fileURLToPa
 
 if (isMainModule) {
   const port = Number.parseInt(process.env.PORT ?? String(DEFAULT_PORT), 10);
-  const host = process.env.HOST ?? "0.0.0.0";
+  const host = process.env.HOST ?? "::";
   const server = createRealtimeServer({
     maxPayloadBytes: Number.parseInt(
       process.env.MAX_PAYLOAD_BYTES ?? String(DEFAULT_MAX_PAYLOAD_BYTES),
@@ -191,7 +191,10 @@ if (isMainModule) {
 
   server
     .start(port, host)
-    .then((address) => console.log(`Room Relay listening on http://${host}:${address.port}`))
+    .then((address) => {
+      const displayHost = host.includes(":") ? `[${host}]` : host;
+      console.log(`Room Relay listening on http://${displayHost}:${address.port}`);
+    })
     .catch((error: unknown) => {
       console.error(error);
       process.exitCode = 1;

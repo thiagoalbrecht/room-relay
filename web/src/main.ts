@@ -1,4 +1,5 @@
 import "./style.css";
+import { createSessionId } from "./session-id";
 
 type ConnectionState = "disconnected" | "connecting" | "connected";
 
@@ -47,8 +48,7 @@ const identitySwatch = get<HTMLSpanElement>("identity-swatch");
 const identityLabel = get<HTMLSpanElement>("identity-label");
 
 const palette = ["#c9ff4a", "#70d6ff", "#ff70a6", "#ffca3a", "#b892ff", "#ff8c42"];
-const sessionId = sessionStorage.getItem("room-relay-id") ?? crypto.randomUUID();
-sessionStorage.setItem("room-relay-id", sessionId);
+const sessionId = getOrCreateSessionId();
 const identity = {
   id: sessionId,
   name: `Guest ${sessionId.slice(0, 4).toUpperCase()}`,
@@ -56,10 +56,14 @@ const identity = {
 };
 
 const defaultProtocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-const defaultHostname = window.location.hostname === "localhost" ? "127.0.0.1" : window.location.hostname;
-const defaultPort = window.location.port === "5173" ? "8080" : window.location.port;
-const defaultHost = defaultPort ? `${defaultHostname}:${defaultPort}` : defaultHostname;
-addressInput.value = `${defaultProtocol}//${defaultHost || "localhost:8080"}/ws`;
+const defaultServerUrl = new URL(window.location.href);
+defaultServerUrl.protocol = defaultProtocol;
+defaultServerUrl.pathname = "/ws";
+defaultServerUrl.search = "";
+defaultServerUrl.hash = "";
+if (defaultServerUrl.port === "5173") defaultServerUrl.port = "8080";
+if (defaultServerUrl.hostname === "localhost") defaultServerUrl.hostname = "127.0.0.1";
+addressInput.value = defaultServerUrl.toString();
 localName.textContent = `${identity.name} · you`;
 localCursor.style.setProperty("--cursor-color", identity.color);
 identitySwatch.style.background = identity.color;
@@ -75,6 +79,18 @@ function hashString(value: string): number {
   let hash = 0;
   for (const character of value) hash = (hash * 31 + character.charCodeAt(0)) >>> 0;
   return hash;
+}
+
+function getOrCreateSessionId(): string {
+  try {
+    const storedId = sessionStorage.getItem("room-relay-id");
+    if (storedId) return storedId;
+    const newId = createSessionId();
+    sessionStorage.setItem("room-relay-id", newId);
+    return newId;
+  } catch {
+    return createSessionId();
+  }
 }
 
 function setState(state: ConnectionState, detail?: string): void {
