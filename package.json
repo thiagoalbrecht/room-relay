@@ -1,0 +1,35 @@
+{
+  "name": "room-relay",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Content-agnostic WebSocket rooms for multiplayer and collaborative applications.",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "dev": "concurrently --kill-others-on-fail --names server,web \"npm:dev:server\" \"npm:dev:web\"",
+    "dev:server": "tsx watch src/server.ts",
+    "dev:web": "vite --host 0.0.0.0",
+    "build": "npm run build:web && npm run build:server",
+    "build:web": "vite build",
+    "build:server": "tsc -p tsconfig.server.json",
+    "typecheck": "tsc -p tsconfig.server.json --noEmit && tsc -p tsconfig.web.json --noEmit",
+    "test": "tsc -p tsconfig.test.json && node --test dist-test/tests/**/*.test.js",
+    "check": "npm run typecheck && npm test && npm run build",
+    "start": "node dist/server/server.js"
+  },
+  "dependencies": {
+    "express": "^5.1.0",
+    "ws": "^8.18.3"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.3",
+    "@types/node": "^24.3.1",
+    "@types/ws": "^8.18.1",
+    "concurrently": "^9.2.1",
+    "tsx": "^4.20.5",
+    "typescript": "^5.9.2",
+    "vite": "^7.1.4"
+  }
+}

@@ -1,0 +1,9 @@
+services:
+  room-relay:
+    build: .
+    ports:
+      - "8080:8080"
+    restart: unless-stopped
+    environment:
+      MAX_PAYLOAD_BYTES: 65536
+      MESSAGES_PER_SECOND: 100
