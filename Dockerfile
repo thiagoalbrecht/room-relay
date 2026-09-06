@@ -1,23 +1,29 @@
-FROM node:24-alpine AS build
+FROM node:24-alpine AS base
+
+ENV PNPM_HOME=/pnpm
+ENV PATH=$PNPM_HOME:$PATH
+RUN corepack enable
+
+FROM base AS build
 
 WORKDIR /app
-COPY package*.json ./
-RUN npm ci
+COPY package.json pnpm-lock.yaml ./
+RUN pnpm install --frozen-lockfile
 
 COPY tsconfig.server.json tsconfig.web.json vite.config.ts ./
 COPY src ./src
 COPY web ./web
-RUN npm run build
+RUN pnpm run build
 
-FROM node:24-alpine AS runtime
+FROM base AS runtime
 
 ENV NODE_ENV=production \
     HOST=0.0.0.0 \
     PORT=8080
 
 WORKDIR /app
-COPY package*.json ./
-RUN npm ci --omit=dev && npm cache clean --force
+COPY package.json pnpm-lock.yaml ./
+RUN pnpm install --prod --frozen-lockfile
 COPY --from=build --chown=node:node /app/dist ./dist
 
 USER node

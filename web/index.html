@@ -3,8 +3,8 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="description" content="Test room-based WebSocket connections." />
-    <title>Room Relay Console</title>
+    <meta name="description" content="A live multiplayer cursor demo for Room Relay." />
+    <title>Room Relay — Live Cursors</title>
     <script type="module" src="/src/main.ts"></script>
   </head>
   <body>
@@ -21,12 +21,12 @@
       </header>
 
       <section class="intro" aria-labelledby="page-title">
-        <p class="eyebrow">WebSocket test console</p>
-        <h1 id="page-title">Meet inside<br />the same room.</h1>
-        <p class="lede">Connect two tabs to one room. Send anything. Watch it arrive in real time.</p>
+        <p class="eyebrow">Multiplayer presence demo</p>
+        <h1 id="page-title">Move together<br />in real time.</h1>
+        <p class="lede">Join the same room in two tabs, then move across the canvas to see every cursor come alive.</p>
       </section>
 
-      <section class="console" aria-label="Connection console">
+      <section class="console" aria-label="Live cursor demo">
         <form class="connection-form" id="connection-form">
           <label class="field field-wide">
             <span>Server address</span>
@@ -42,43 +42,44 @@
           </button>
         </form>
 
-        <div class="workspace">
-          <section class="compose" aria-labelledby="compose-title">
-            <div class="section-heading">
-              <span class="step">01</span>
-              <h2 id="compose-title">Compose</h2>
-            </div>
-            <form id="message-form">
-              <label class="sr-only" for="message-input">Message</label>
-              <textarea id="message-input" rows="7" placeholder='{"type":"cursor.move","x":120,"y":84}' disabled></textarea>
-              <div class="compose-footer">
-                <span>Ctrl / ⌘ + Enter to send</span>
-                <button class="button button-send" id="send-button" type="submit" disabled>
-                  Send message <span aria-hidden="true">→</span>
-                </button>
-              </div>
-            </form>
-          </section>
+        <div class="canvas-heading">
+          <div class="section-heading">
+            <span class="step">01</span>
+            <h2>Shared canvas</h2>
+          </div>
+          <span class="participant-count" id="participant-count">0 cursors online</span>
+        </div>
 
-          <section class="messages" aria-labelledby="messages-title">
-            <div class="section-heading">
-              <span class="step">02</span>
-              <h2 id="messages-title">Message stream</h2>
-              <button class="clear-button" id="clear-button" type="button">Clear</button>
-            </div>
-            <ol class="message-list" id="message-list" aria-live="polite">
-              <li class="empty-state" id="empty-state">
-                <span class="empty-icon" aria-hidden="true">↝</span>
-                <p>Incoming and outgoing messages will appear here.</p>
-              </li>
-            </ol>
-          </section>
+        <div class="cursor-stage" id="cursor-stage" aria-label="Shared cursor canvas">
+          <div class="coordinate-grid" aria-hidden="true"></div>
+          <div class="stage-copy" aria-hidden="true">
+            <span>X / 000—100</span>
+            <strong>MOVE<br />HERE</strong>
+            <span>Y / 000—100</span>
+          </div>
+          <div class="stage-notice" id="stage-notice">
+            <span class="notice-icon" aria-hidden="true">↗</span>
+            <p>Connect to activate the shared canvas</p>
+          </div>
+          <div class="cursor-layer" id="cursor-layer" aria-live="polite"></div>
+          <div class="demo-cursor local-cursor" id="local-cursor" hidden aria-hidden="true">
+            <svg viewBox="0 0 24 30"><path d="M2 2v23l6.8-6.4 4.4 9.4 4-1.9-4.5-9.1H22L2 2Z"/></svg>
+            <span id="local-name">You</span>
+          </div>
+        </div>
+
+        <div class="presence-bar">
+          <div class="identity">
+            <span class="identity-swatch" id="identity-swatch" aria-hidden="true"></span>
+            <span id="identity-label">Your cursor is assigned per tab</span>
+          </div>
+          <p id="connection-note">Connect, then open this page in another tab using the same room.</p>
         </div>
       </section>
 
       <footer>
-        <span>One room. Any payload.</span>
-        <span>Text + binary WebSockets</span>
+        <span>One room. Every cursor.</span>
+        <span>Powered by opaque WebSocket relay</span>
       </footer>
     </main>
   </body>

@@ -1,6 +1,27 @@
 import "./style.css";
 
-type StreamDirection = "sent" | "received" | "system";
+type ConnectionState = "disconnected" | "connecting" | "connected";
+
+interface CursorPacket {
+  type: "cursor";
+  version: 1;
+  id: string;
+  name: string;
+  color: string;
+  x: number;
+  y: number;
+}
+
+interface LeavePacket {
+  type: "leave";
+  version: 1;
+  id: string;
+}
+
+interface RemoteCursor {
+  element: HTMLDivElement;
+  lastSeenAt: number;
+}
 
 const get = <T extends HTMLElement>(id: string): T => {
   const element = document.getElementById(id);
@@ -9,26 +30,54 @@ const get = <T extends HTMLElement>(id: string): T => {
 };
 
 const connectionForm = get<HTMLFormElement>("connection-form");
-const messageForm = get<HTMLFormElement>("message-form");
 const addressInput = get<HTMLInputElement>("server-address");
 const roomInput = get<HTMLInputElement>("room-name");
 const connectButton = get<HTMLButtonElement>("connect-button");
 const connectLabel = get<HTMLSpanElement>("connect-label");
-const messageInput = get<HTMLTextAreaElement>("message-input");
-const sendButton = get<HTMLButtonElement>("send-button");
 const statusDot = get<HTMLSpanElement>("status-dot");
 const statusText = get<HTMLSpanElement>("status-text");
-const messageList = get<HTMLOListElement>("message-list");
-const emptyState = get<HTMLLIElement>("empty-state");
-const clearButton = get<HTMLButtonElement>("clear-button");
+const stage = get<HTMLDivElement>("cursor-stage");
+const stageNotice = get<HTMLDivElement>("stage-notice");
+const cursorLayer = get<HTMLDivElement>("cursor-layer");
+const localCursor = get<HTMLDivElement>("local-cursor");
+const localName = get<HTMLSpanElement>("local-name");
+const participantCount = get<HTMLSpanElement>("participant-count");
+const connectionNote = get<HTMLParagraphElement>("connection-note");
+const identitySwatch = get<HTMLSpanElement>("identity-swatch");
+const identityLabel = get<HTMLSpanElement>("identity-label");
+
+const palette = ["#c9ff4a", "#70d6ff", "#ff70a6", "#ffca3a", "#b892ff", "#ff8c42"];
+const sessionId = sessionStorage.getItem("room-relay-id") ?? crypto.randomUUID();
+sessionStorage.setItem("room-relay-id", sessionId);
+const identity = {
+  id: sessionId,
+  name: `Guest ${sessionId.slice(0, 4).toUpperCase()}`,
+  color: palette[hashString(sessionId) % palette.length]!,
+};
 
 const defaultProtocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-addressInput.value = `${defaultProtocol}//${window.location.host || "localhost:8080"}/ws`;
+const defaultHostname = window.location.hostname === "localhost" ? "127.0.0.1" : window.location.hostname;
+const defaultPort = window.location.port === "5173" ? "8080" : window.location.port;
+const defaultHost = defaultPort ? `${defaultHostname}:${defaultPort}` : defaultHostname;
+addressInput.value = `${defaultProtocol}//${defaultHost || "localhost:8080"}/ws`;
+localName.textContent = `${identity.name} · you`;
+localCursor.style.setProperty("--cursor-color", identity.color);
+identitySwatch.style.background = identity.color;
+identityLabel.textContent = `${identity.name} · this tab`;
 
 let socket: WebSocket | null = null;
 let reconnectToken = 0;
+let queuedFrame = 0;
+let latestPosition = { x: 0.5, y: 0.5 };
+const remoteCursors = new Map<string, RemoteCursor>();
 
-function setState(state: "disconnected" | "connecting" | "connected", detail?: string): void {
+function hashString(value: string): number {
+  let hash = 0;
+  for (const character of value) hash = (hash * 31 + character.charCodeAt(0)) >>> 0;
+  return hash;
+}
+
+function setState(state: ConnectionState, detail?: string): void {
   document.body.dataset.connection = state;
   statusDot.dataset.state = state;
   statusText.textContent = detail ?? state[0]!.toUpperCase() + state.slice(1);
@@ -38,8 +87,12 @@ function setState(state: "disconnected" | "connecting" | "connected", detail?: s
   connectButton.disabled = connecting;
   addressInput.disabled = connected || connecting;
   roomInput.disabled = connected || connecting;
-  messageInput.disabled = !connected;
-  sendButton.disabled = !connected;
+  stage.classList.toggle("is-live", connected);
+  stageNotice.hidden = connected;
+  connectionNote.textContent = connected
+    ? "Move inside the canvas. Other people in this room will see your cursor."
+    : "Connect, then open this page in another tab using the same room.";
+  updateParticipantCount();
 }
 
 function normalizedAddress(rawAddress: string, room: string): string {
@@ -55,35 +108,85 @@ function normalizedAddress(rawAddress: string, room: string): string {
   return url.toString();
 }
 
-function formatTime(date = new Date()): string {
-  return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+function updateParticipantCount(): void {
+  const total = remoteCursors.size + (socket?.readyState === WebSocket.OPEN ? 1 : 0);
+  participantCount.textContent = `${total} ${total === 1 ? "cursor" : "cursors"} online`;
 }
 
-function addMessage(direction: StreamDirection, content: string): void {
-  emptyState.remove();
-  const item = document.createElement("li");
-  item.className = `message message-${direction}`;
+function packetForPosition(): CursorPacket {
+  return { type: "cursor", version: 1, ...identity, ...latestPosition };
+}
 
-  const meta = document.createElement("div");
-  meta.className = "message-meta";
-  const label = document.createElement("span");
-  label.textContent = direction;
-  const time = document.createElement("time");
-  time.dateTime = new Date().toISOString();
-  time.textContent = formatTime();
-  meta.append(label, time);
+function send(packet: CursorPacket | LeavePacket): void {
+  if (socket?.readyState === WebSocket.OPEN) socket.send(JSON.stringify(packet));
+}
 
-  const payload = document.createElement("pre");
-  payload.textContent = content;
-  item.append(meta, payload);
-  messageList.prepend(item);
+function removeRemoteCursor(id: string): void {
+  const cursor = remoteCursors.get(id);
+  if (!cursor) return;
+  cursor.element.remove();
+  remoteCursors.delete(id);
+  updateParticipantCount();
+}
+
+function renderRemoteCursor(packet: CursorPacket): void {
+  if (packet.id === identity.id) return;
+  let remote = remoteCursors.get(packet.id);
+  if (!remote) {
+    if (remoteCursors.size >= 64) return;
+    const element = document.createElement("div");
+    element.className = "demo-cursor remote-cursor";
+    element.dataset.cursorId = packet.id;
+    element.innerHTML = '<svg viewBox="0 0 24 30" aria-hidden="true"><path d="M2 2v23l6.8-6.4 4.4 9.4 4-1.9-4.5-9.1H22L2 2Z"/></svg><span></span>';
+    cursorLayer.append(element);
+    remote = { element, lastSeenAt: Date.now() };
+    remoteCursors.set(packet.id, remote);
+  }
+
+  remote.lastSeenAt = Date.now();
+  remote.element.style.setProperty("--cursor-x", String(packet.x));
+  remote.element.style.setProperty("--cursor-y", String(packet.y));
+  remote.element.style.setProperty("--cursor-color", packet.color);
+  const label = remote.element.querySelector("span");
+  if (label) label.textContent = packet.name;
+  updateParticipantCount();
+}
+
+function isCursorPacket(value: unknown): value is CursorPacket {
+  if (!value || typeof value !== "object") return false;
+  const packet = value as Partial<CursorPacket>;
+  return packet.type === "cursor" &&
+    packet.version === 1 &&
+    typeof packet.id === "string" && packet.id.length > 0 && packet.id.length <= 64 &&
+    typeof packet.name === "string" && packet.name.length > 0 && packet.name.length <= 24 &&
+    typeof packet.color === "string" && /^#[\da-f]{6}$/i.test(packet.color) &&
+    typeof packet.x === "number" && Number.isFinite(packet.x) && packet.x >= 0 && packet.x <= 1 &&
+    typeof packet.y === "number" && Number.isFinite(packet.y) && packet.y >= 0 && packet.y <= 1;
+}
+
+function isLeavePacket(value: unknown): value is LeavePacket {
+  if (!value || typeof value !== "object") return false;
+  const packet = value as Partial<LeavePacket>;
+  return packet.type === "leave" && packet.version === 1 &&
+    typeof packet.id === "string" && packet.id.length > 0 && packet.id.length <= 64;
+}
+
+function clearRemoteCursors(): void {
+  for (const cursor of remoteCursors.values()) cursor.element.remove();
+  remoteCursors.clear();
+  updateParticipantCount();
 }
 
 function disconnect(): void {
   reconnectToken += 1;
   const activeSocket = socket;
+  if (activeSocket?.readyState === WebSocket.OPEN) {
+    activeSocket.send(JSON.stringify({ type: "leave", version: 1, id: identity.id } satisfies LeavePacket));
+  }
   socket = null;
   activeSocket?.close(1000, "Disconnected by user");
+  localCursor.hidden = true;
+  clearRemoteCursors();
   setState("disconnected");
 }
 
@@ -92,7 +195,7 @@ function connect(): void {
   try {
     url = normalizedAddress(addressInput.value.trim(), roomInput.value.trim());
   } catch (error) {
-    addMessage("system", error instanceof Error ? error.message : "Invalid server address");
+    connectionNote.textContent = error instanceof Error ? error.message : "Invalid server address";
     return;
   }
 
@@ -103,26 +206,33 @@ function connect(): void {
 
   nextSocket.addEventListener("open", () => {
     if (token !== reconnectToken) return;
-    setState("connected", `Connected · ${roomInput.value.trim()}`);
-    addMessage("system", `Joined room “${roomInput.value.trim()}”`);
-    messageInput.focus();
+    setState("connected", `Live · ${roomInput.value.trim()}`);
+    send(packetForPosition());
   });
 
   nextSocket.addEventListener("message", async (event) => {
-    const content = typeof event.data === "string" ? event.data : await event.data.text();
-    addMessage("received", content);
+    try {
+      const content = typeof event.data === "string" ? event.data : await event.data.text();
+      const packet: unknown = JSON.parse(content);
+      if (isCursorPacket(packet)) renderRemoteCursor(packet);
+      else if (isLeavePacket(packet)) removeRemoteCursor(packet.id);
+    } catch {
+      // The relay is content-agnostic; this demo ignores packets it does not understand.
+    }
   });
 
   nextSocket.addEventListener("error", () => {
-    if (token === reconnectToken) addMessage("system", "Connection error. Check the server address.");
+    if (token === reconnectToken) connectionNote.textContent = "Connection error. Check the server address.";
   });
 
   nextSocket.addEventListener("close", (event) => {
     if (token !== reconnectToken) return;
     socket = null;
+    localCursor.hidden = true;
+    clearRemoteCursors();
     setState("disconnected", event.wasClean ? "Disconnected" : "Connection lost");
-    if (event.code !== 1000) {
-      addMessage("system", `Connection closed (${event.code}${event.reason ? `: ${event.reason}` : ""})`);
+    if (!event.wasClean) {
+      connectionNote.textContent = `Connection closed (${event.code}${event.reason ? `: ${event.reason}` : ""}).`;
     }
   });
 }
@@ -133,26 +243,42 @@ connectionForm.addEventListener("submit", (event) => {
   else connect();
 });
 
-messageForm.addEventListener("submit", (event) => {
-  event.preventDefault();
-  const message = messageInput.value;
-  if (!message || socket?.readyState !== WebSocket.OPEN) return;
-  socket.send(message);
-  addMessage("sent", message);
-  messageInput.value = "";
-  messageInput.focus();
-});
+stage.addEventListener("pointermove", (event) => {
+  if (socket?.readyState !== WebSocket.OPEN) return;
+  const bounds = stage.getBoundingClientRect();
+  latestPosition = {
+    x: Math.min(1, Math.max(0, (event.clientX - bounds.left) / bounds.width)),
+    y: Math.min(1, Math.max(0, (event.clientY - bounds.top) / bounds.height)),
+  };
+  localCursor.hidden = false;
+  localCursor.style.setProperty("--cursor-x", String(latestPosition.x));
+  localCursor.style.setProperty("--cursor-y", String(latestPosition.y));
 
-messageInput.addEventListener("keydown", (event) => {
-  if (event.key === "Enter" && (event.ctrlKey || event.metaKey)) {
-    event.preventDefault();
-    messageForm.requestSubmit();
+  if (!queuedFrame) {
+    queuedFrame = requestAnimationFrame(() => {
+      queuedFrame = 0;
+      send(packetForPosition());
+    });
   }
 });
 
-clearButton.addEventListener("click", () => {
-  messageList.replaceChildren(emptyState);
+stage.addEventListener("pointerleave", () => {
+  localCursor.hidden = true;
 });
 
-window.addEventListener("beforeunload", () => socket?.close(1000));
+setInterval(() => {
+  if (socket?.readyState === WebSocket.OPEN) send(packetForPosition());
+  const staleBefore = Date.now() - 10_000;
+  for (const [id, cursor] of remoteCursors) {
+    if (cursor.lastSeenAt < staleBefore) removeRemoteCursor(id);
+  }
+}, 3_000);
+
+window.addEventListener("beforeunload", () => {
+  if (socket?.readyState === WebSocket.OPEN) {
+    socket.send(JSON.stringify({ type: "leave", version: 1, id: identity.id } satisfies LeavePacket));
+    socket.close(1000);
+  }
+});
+
 setState("disconnected");

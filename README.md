@@ -2,7 +2,7 @@
 
 A content-agnostic WebSocket relay for multiplayer games, collaborative tools, live dashboards, and prototypes. Clients join a room through the connection URL; every text or binary message is forwarded unchanged to the other clients in that room.
 
-The included browser console lets you connect two tabs, choose a room, and test messages immediately.
+The included live-cursor demo lets you connect two tabs, choose a room, and see each participant's cursor move in real time.
 
 ## Run with Docker
 
@@ -10,7 +10,7 @@ The included browser console lets you connect two tabs, choose a room, and test 
 docker compose up --build
 ```
 
-Open [http://localhost:8080](http://localhost:8080), then open a second tab. Keep both tabs in the same room and send a message from either one.
+Open [http://localhost:8080](http://localhost:8080), then open a second tab. Keep both tabs in the same room, connect, and move across the shared canvas.
 
 ## WebSocket API
 
@@ -43,8 +43,8 @@ socket.addEventListener("message", (event) => {
 Requires Node.js 22 or later.
 
 ```bash
-npm install
-npm run dev
+pnpm install
+pnpm dev
 ```
 
 - Browser console: `http://localhost:5173`
@@ -56,9 +56,9 @@ The development browser console defaults to its own origin, so change **Server a
 
 | Command | Purpose |
 | --- | --- |
-| `npm run dev` | Run the server and browser console with live reload |
-| `npm run check` | Typecheck, test, and build everything |
-| `npm start` | Run a completed production build |
+| `pnpm dev` | Run the server and live-cursor demo with live reload |
+| `pnpm check` | Typecheck, test, and build everything |
+| `pnpm start` | Run a completed production build |
 
 ## Configuration
 
